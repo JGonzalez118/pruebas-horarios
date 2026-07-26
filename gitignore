@@ -1,0 +1,24 @@
+# Variables de entorno con credenciales — NUNCA se sube
+.env
+.env.local
+*.env
+
+# Entornos virtuales
+venv/
+.venv/
+env/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+
+# Editor / SO
+.vscode/
+.idea/
+.DS_Store
+
+# Logs
+*.log

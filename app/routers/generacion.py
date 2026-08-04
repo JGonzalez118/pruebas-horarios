@@ -1,5 +1,5 @@
 import time
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 
 from database import get_connection
@@ -8,6 +8,8 @@ from ga.chromosome import CodificadorHorario
 from ga.fitness import CalculadorFitness
 from ga.engine import MotorGenetico
 from writer import GuardadorResultados
+
+from auth import obtener_usuario_actual, verificar_acceso_facultad 
 
 router = APIRouter(prefix="/generacion", tags=["Generación GA"])
 
@@ -22,7 +24,13 @@ class SolicitudGeneracion(BaseModel):
 
 
 @router.post("/ejecutar")
-def ejecutar_generacion(solicitud: SolicitudGeneracion):
+def ejecutar_generacion(
+        solicitud: SolicitudGeneracion,
+        usuario: dict = Depends(obtener_usuario_actual),
+    ):
+
+    verificar_acceso_facultad(usuario, solicitud.facultad_id    )
+
     conn = get_connection()
     loader = DataLoader(conn)
 

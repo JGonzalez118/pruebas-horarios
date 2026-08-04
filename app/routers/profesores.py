@@ -1,6 +1,8 @@
 import json
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from database import get_connection
+
+from auth import obtener_usuario_actual, verificar_acceso_facultad
 
 router = APIRouter(prefix="/profesores", tags=["Profesores"])
 
@@ -18,13 +20,16 @@ def _obtener_umbral_calificacion(cursor) -> float:
 
 
 @router.get("/disponibles")
-def profesores_disponibles(facultad_id: int, periodo_academico_id: int):
+def profesores_disponibles(facultad_id: int, periodo_academico_id: int, usuario: dict = Depends(obtener_usuario_actual)):
     """
     Profesores con horas de contrato restantes para este periodo,
     considerando lo YA comprometido en CUALQUIER facultad (no solo la
     que consulta), para que dos coordinadores no sobre-asignen al mismo
     profesor sin saberlo.
     """
+
+    verificar_acceso_facultad(usuario, facultad_id)
+
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("""

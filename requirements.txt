@@ -2,6 +2,7 @@ annotated-doc==0.0.4
 annotated-types==0.8.0
 anyio==4.14.2
 click==8.4.2
+dbutils==3.1.2
 fastapi==0.140.0
 h11==0.16.0
 httptools==0.8.0

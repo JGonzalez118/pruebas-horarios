@@ -18,7 +18,8 @@ def _a_time(valor) -> datetime.time:
         horas, resto = divmod(total_segundos, 3600)
         minutos, segundos = divmod(resto, 60)
         return datetime.time(hour=horas % 24, minute=minutos, second=segundos)
-    raise TypeError(f"No se pudo convertir {valor!r} ({type(valor)}) a datetime.time")
+    raise TypeError(
+        f"No se pudo convertir {valor!r} ({type(valor)}) a datetime.time")
 
 
 class DataLoader:
@@ -87,7 +88,8 @@ class DataLoader:
 
         cargas = []
         for row in self.cursor.fetchall():
-            disponibilidad = self._cargar_disponibilidad(row["disponibilidad_x_profesor_id"])
+            disponibilidad = self._cargar_disponibilidad(
+                row["disponibilidad_x_profesor_id"])
             carga = CargaAcademica(
                 id=row["id"],
                 grupo_id=row["grupo_id"],
@@ -161,14 +163,18 @@ class DataLoader:
         cargar_ocupacion_actual_profesores() en la siguiente corrida.
         """
         cursor = self.conn.cursor()
-        cursor.execute("""
-            UPDATE horarios_asignados ha
-            JOIN carga_academica ca ON ha.carga_academica_id = ca.id
-            JOIN grupos g ON ca.grupo_id = g.id
-            JOIN carreras c ON g.carrera_id = c.id
-            SET ha.estado = 'archivado'
-            WHERE c.facultad_id = %s
-              AND ha.periodo_academico_id = %s
-              AND ha.estado = 'borrador'
-        """, (facultad_id, periodo_id))
-        self.conn.commit()
+        try:
+            cursor.execute("""
+                UPDATE horarios_asignados ha
+                JOIN carga_academica ca ON ha.carga_academica_id = ca.id
+                JOIN grupos g ON ca.grupo_id = g.id
+                JOIN carreras c ON g.carrera_id = c.id
+                SET ha.estado = 'archivado'
+                WHERE c.facultad_id = %s
+                AND ha.periodo_academico_id = %s
+                AND ha.estado = 'borrador'
+            """, (facultad_id, periodo_id))
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise

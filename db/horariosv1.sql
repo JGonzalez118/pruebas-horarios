@@ -400,9 +400,11 @@ CREATE TABLE `corridas_generacion` (
     `fecha_ejecucion` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     `duracion_segundos` DECIMAL(10,2),
     `iteraciones` INT UNSIGNED,
-    `estado` ENUM('exitoso', 'parcial', 'fallido') NOT NULL DEFAULT 'parcial',
+    `estado` ENUM('procesando', 'exitoso', 'parcial', 'fallido') NOT NULL DEFAULT 'procesando',
     `conflictos_detectados` INT UNSIGNED NOT NULL DEFAULT 0,
     `conflictos_resueltos` INT UNSIGNED NOT NULL DEFAULT 0,
+    `fitness_final` DECIMAL(8,6) NULL COMMENT 'Fitness del mejor individuo encontrado, NULL mientras procesando',
+    `mensaje_error` TEXT NULL COMMENT 'Detalle del error si es estado = fallido',
     PRIMARY KEY (`id`),
     KEY `idx_corridas_periodo` (`periodo_academico_id`),
     CONSTRAINT `fk_corridas_periodo`

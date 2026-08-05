@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from routers import (restricciones, generacion, resultados, profesores, auth, usuarios, facultades, 
-                    carreras, materias, grupos, aulas, contratos, periodos_academicos)
+                    carreras, materias, grupos, aulas, contratos, periodos_academicos, carga_academica)
 
 app = FastAPI(
     title="API de Pruebas — Algoritmo Genético para Horarios",
@@ -20,6 +20,7 @@ app.include_router(grupos.router)
 app.include_router(aulas.router)
 app.include_router(contratos.router)
 app.include_router(periodos_academicos.router)
+app.include_router(carga_academica.router)
 
 @app.get("/")
 def raiz():

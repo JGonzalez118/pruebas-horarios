@@ -35,6 +35,11 @@ INSERT INTO `usuarios`
 VALUES
 (1, 2, 1, '8-888-0001', 'Ana', 'Rodríguez', 'coord.fisc@utp.test', '$2y$10$fakehashfakehashfakehashfa');
 
+INSERT INTO usuarios
+(rol_id, departamento_id, cedula, nombre, apellido, correo, password_hash, estado_cuenta)
+VALUES
+(1, NULL, '8-000-0000', 'Admin', 'Sistema', 'admin@fisc.test', '$2b$12$x81ApyhXW5OO0t/2ngLrReA5N9PVoKtMpJsfppyabGS5cCIvVYmYG', 'Activa');
+
 -- ---------------------------------------------------------------------
 -- 2. CARRERAS Y PLANES DE ESTUDIO (nombres reales de la oferta de FISC)
 -- ---------------------------------------------------------------------

@@ -41,3 +41,16 @@ DB_NAME="sistema_horarios_ga"
 DB_USER="root"
 DB_PASSWORD="tu contraseña si la tienes puesta a tu mariadb"
 ```
+ADEMAS DEBES PONER ESTO TAMBIÉN:
+```
+JWT_SECRET_KEY=
+JWT_ALGORITHM=HS256
+JWT_EXPIRATION_MINUTES=480
+```
+
+La secret key la generas con esto, puedes ir a un interpreter de python en linea y correr esto y copias el resultado
+```
+import secrets; 
+
+print(secrets.token_hex(32))
+```

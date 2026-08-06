@@ -3,6 +3,7 @@ from pydantic import BaseModel
 
 from database import get_connection
 from auth import obtener_usuario_actual, verificar_acceso_facultad
+from validaciones import consultar_candidatos_elegibles
 
 router = APIRouter(prefix="/resultados", tags=["Resultados"])
 
@@ -22,6 +23,7 @@ def horario_por_grupo(grupo_id: int, corrida_id: int):
     cursor = conn.cursor()
     cursor.execute("""
         SELECT
+            ha.id AS horario_id,
             mat.nombre AS materia,
             p.nombre AS profesor_nombre, p.apellido AS profesor_apellido,
             a.nombre AS aula,
@@ -47,6 +49,7 @@ def horario_por_profesor(profesor_id: int, corrida_id: int):
     cursor = conn.cursor()
     cursor.execute("""
         SELECT
+            ha.id AS horario_id,
             g.codigo_grupo, mat.nombre AS materia,
             a.nombre AS aula, ha.dia, TIME_FORMAT(bh.hora_inicio, '%%H:%%i') AS hora_inicio, TIME_FORMAT(bh.hora_fin, '%%H:%%i') AS hora_fin
         FROM horarios_asignados ha
@@ -70,6 +73,7 @@ def horario_por_aula(aula_id: int, corrida_id: int):
     cursor = conn.cursor()
     cursor.execute("""
         SELECT
+            ha.id AS horario_id,
             g.codigo_grupo, mat.nombre AS materia,
             p.nombre AS profesor_nombre, ha.dia, TIME_FORMAT(bh.hora_inicio, '%%H:%%i') AS hora_inicio, TIME_FORMAT(bh.hora_fin, '%%H:%%i') AS hora_fin
         FROM horarios_asignados ha
@@ -185,3 +189,165 @@ def editar_horario_manual(
         conn.close()
 
     return {"mensaje": "Horario actualizado correctamente"}
+
+
+@router.get("/{horario_id}")
+def obtener_horario(horario_id: int):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT
+            ha.id AS horario_id,
+            ca.grupo_id, g.codigo_grupo,
+            mat.nombre AS materia,
+            dxp.profesor_id, p.nombre AS profesor_nombre, p.apellido AS profesor_apellido,
+            ha.aula_id, a.nombre AS aula,
+            ha.dia, ha.bloque_id,
+            TIME_FORMAT(bh.hora_inicio, '%%H:%%i') AS hora_inicio,
+            TIME_FORMAT(bh.hora_fin, '%%H:%%i') AS hora_fin,
+            ha.estado, ha.corrida_generacion_id
+        FROM horarios_asignados ha
+        JOIN carga_academica ca ON ha.carga_academica_id = ca.id
+        JOIN grupos g ON ca.grupo_id = g.id
+        JOIN materias mat ON ca.materia_id = mat.id
+        JOIN disponibilidad_x_profesor dxp ON ca.disponibilidad_x_profesor_id = dxp.id
+        JOIN profesores p ON dxp.profesor_id = p.id
+        JOIN aulas a ON ha.aula_id = a.id
+        JOIN bloques_horarios bh ON ha.bloque_id = bh.id
+        WHERE ha.id = %s
+    """, (horario_id,))
+    resultado = cursor.fetchone()
+    conn.close()
+
+    if not resultado:
+        raise HTTPException(status_code=404, detail="Horario no encontrado")
+
+    resultado["dia_nombre"] = DIAS.get(resultado["dia"], str(resultado["dia"]))
+    return resultado
+
+# =====================================================
+# VALIDAR REASIGNAR UN PROFESOR | HORARIOS EDITABLES
+# =====================================================
+
+class ReasignarProfesorRequest(BaseModel):
+    nuevo_profesor_id: int
+
+
+@router.patch(
+    "/{horario_id}/reasignar-profesor",
+    summary="Reasignar el profesor de TODA la materia-grupo a la que pertenece este horario",
+    description=(
+        "IMPORTANTE: el profesor no se guarda por sesión individual, sino "
+        "a nivel de carga_academica. Reasignar aquí afecta automáticamente "
+        "a TODAS las sesiones semanales de esa misma materia-grupo, no "
+        "solo a la sesión que se está viendo. Valida elegibilidad del "
+        "nuevo profesor, su disponibilidad declarada en cada sesión ya "
+        "generada, y que no choque con otras clases que ya tenga asignadas."
+    ),
+)
+def reasignar_profesor(
+    horario_id: int,
+    datos: ReasignarProfesorRequest,
+    usuario: dict = Depends(obtener_usuario_actual),
+):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    # Paso 1: resolver la carga_academica completa a partir del horario
+    cursor.execute("""
+        SELECT ca.id AS carga_academica_id, ca.materia_id, ca.periodo_academico_id,
+               c.facultad_id
+        FROM horarios_asignados ha
+        JOIN carga_academica ca ON ha.carga_academica_id = ca.id
+        JOIN grupos g ON ca.grupo_id = g.id
+        JOIN carreras c ON g.carrera_id = c.id
+        WHERE ha.id = %s
+    """, (horario_id,))
+    carga = cursor.fetchone()
+    if not carga:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Horario no encontrado")
+
+    verificar_acceso_facultad(usuario, carga["facultad_id"])
+
+    # Paso 2: TODAS las sesiones semanales de esa misma carga_academica
+    cursor.execute("""
+        SELECT id, dia, bloque_id
+        FROM horarios_asignados
+        WHERE carga_academica_id = %s AND estado IN ('borrador', 'publicado')
+    """, (carga["carga_academica_id"],))
+    sesiones = cursor.fetchall()
+
+    # Paso 3: elegibilidad general del nuevo profesor para esta materia
+    candidatos = consultar_candidatos_elegibles(
+        cursor, carga["materia_id"], carga["periodo_academico_id"],
+        profesor_id=datos.nuevo_profesor_id,
+    )
+    if not candidatos:
+        conn.close()
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "El nuevo profesor no es elegible para esta materia: revisa "
+                "departamento, créditos académicos, calificación vigente, "
+                "contrato activo para este periodo, u horas de contrato disponibles."
+            ),
+        )
+    nueva_dxp_id = candidatos[0]["disponibilidad_x_profesor_id"]
+
+    # Paso 4: disponibilidad horaria real del nuevo profesor
+    cursor.execute(
+        "SELECT dia, bloque_id FROM horarios_disponibles WHERE disponibilidad_x_profesor_id = %s",
+        (nueva_dxp_id,),
+    )
+    slots_disponibles = {(f["dia"], f["bloque_id"]) for f in cursor.fetchall()}
+
+    sesiones_sin_disponibilidad = [
+        s for s in sesiones if (s["dia"], s["bloque_id"]) not in slots_disponibles
+    ]
+
+    # Paso 5: choque con otras clases que el nuevo profesor ya tiene asignadas
+    cursor.execute("""
+        SELECT ha2.dia, ha2.bloque_id
+        FROM horarios_asignados ha2
+        JOIN carga_academica ca2 ON ha2.carga_academica_id = ca2.id
+        WHERE ca2.disponibilidad_x_profesor_id = %s
+          AND ca2.id != %s
+          AND ha2.estado IN ('borrador', 'publicado')
+    """, (nueva_dxp_id, carga["carga_academica_id"]))
+    slots_ocupados_por_otras_clases = {
+        (f["dia"], f["bloque_id"]) for f in cursor.fetchall()}
+
+    sesiones_con_choque = [
+        s for s in sesiones if (s["dia"], s["bloque_id"]) in slots_ocupados_por_otras_clases
+    ]
+
+    if sesiones_sin_disponibilidad or sesiones_con_choque:
+        conn.close()
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "mensaje": "El nuevo profesor no puede tomar todas las sesiones ya generadas de esta materia.",
+                "sesiones_fuera_de_disponibilidad": [s["id"] for s in sesiones_sin_disponibilidad],
+                "sesiones_con_choque_de_horario": [s["id"] for s in sesiones_con_choque],
+            },
+        )
+
+    # Paso 6: todo válido -- aplicar el cambio a nivel de carga_academica
+    try:
+        cursor.execute(
+            "UPDATE carga_academica SET disponibilidad_x_profesor_id = %s WHERE id = %s",
+            (nueva_dxp_id, carga["carga_academica_id"]),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+    return {
+        "mensaje": "Profesor reasignado correctamente",
+        "carga_academica_id": carga["carga_academica_id"],
+        "sesiones_afectadas": [s["id"] for s in sesiones],
+    }

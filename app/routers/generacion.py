@@ -137,3 +137,82 @@ def obtener_corrida(corrida_id: int, usuario: dict = Depends(obtener_usuario_act
     if not resultado:
         raise HTTPException(status_code=404, detail="Corrida no encontrada")
     return resultado
+
+
+@router.patch("/corridas/{corrida_id}/publicar")
+def publicar_corrida(corrida_id: int, usuario: dict = Depends(obtener_usuario_actual)):
+    """
+    Marca como 'publicado' todas las sesiones en 'borrador' de esta
+    corrida. Solo se puede publicar una corrida en estado 'exitoso'.
+
+    Si la facultad/periodo ya tenía una corrida publicada antes, esa
+    publicación anterior se archiva automáticamente -- solo puede
+    haber UN conjunto de horarios "oficial" vigente a la vez por
+    facultad y periodo, igual que con periodos_academicos.activo.
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        "SELECT estado, periodo_academico_id FROM corridas_generacion WHERE id = %s",
+        (corrida_id,),
+    )
+    corrida = cursor.fetchone()
+    if not corrida:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Corrida no encontrada")
+    if corrida["estado"] != "exitoso":
+        conn.close()
+        raise HTTPException(
+            status_code=409,
+            detail=f"Solo se pueden publicar corridas en estado 'exitoso' (esta está en '{corrida['estado']}')",
+        )
+
+    cursor.execute("""
+        SELECT c.facultad_id
+        FROM horarios_asignados ha
+        JOIN carga_academica ca ON ha.carga_academica_id = ca.id
+        JOIN grupos g ON ca.grupo_id = g.id
+        JOIN carreras c ON g.carrera_id = c.id
+        WHERE ha.corrida_generacion_id = %s
+        LIMIT 1
+    """, (corrida_id,))
+    fila = cursor.fetchone()
+    if not fila:
+        conn.close()
+        raise HTTPException(
+            status_code=404, detail="Esta corrida no tiene horarios asociados")
+
+    facultad_id = fila["facultad_id"]
+    verificar_acceso_facultad(usuario, facultad_id)
+
+    try:
+        cursor.execute("""
+            UPDATE horarios_asignados ha
+            JOIN carga_academica ca ON ha.carga_academica_id = ca.id
+            JOIN grupos g ON ca.grupo_id = g.id
+            JOIN carreras c ON g.carrera_id = c.id
+            SET ha.estado = 'archivado'
+            WHERE c.facultad_id = %s
+              AND ha.periodo_academico_id = %s
+              AND ha.estado = 'publicado'
+        """, (facultad_id, corrida["periodo_academico_id"]))
+
+        cursor.execute("""
+            UPDATE horarios_asignados
+            SET estado = 'publicado'
+            WHERE corrida_generacion_id = %s AND estado = 'borrador'
+        """, (corrida_id,))
+        filas_publicadas = cursor.rowcount
+
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+    return {
+        "mensaje": "Corrida publicada correctamente",
+        "sesiones_publicadas": filas_publicadas,
+    }
